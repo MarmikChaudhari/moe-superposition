@@ -1,6 +1,10 @@
 # moe-superposition
 
 
+## References
+
+[Anthropic's Toy Models of Superposition](https://transformer-circuits.pub/2022/toy_model/index.html)
+
 ## Notebook References
 
 [Modeling a "phase diagram" of superposition for exact toy models](https://github.com/wattenberg/superposition/blob/main/Exploring_Exact_Toy_Models.ipynb)
