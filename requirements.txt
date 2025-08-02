@@ -4,3 +4,4 @@ ipywidgets
 einops
 notebook
 tqdm
+matplotlib
