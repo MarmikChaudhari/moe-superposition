@@ -1,3 +1,5 @@
+# Examples in the dimensions_per_feature.ipynb notebook
+
 import torch
 import matplotlib.pyplot as plt
 
@@ -119,7 +121,7 @@ def plot_feature_dimensionality_analysis(analysis, title="Feature Dimensionality
     # Convert tensors to numpy for plotting
     feature_dims = [d.item() if torch.is_tensor(d) else d for d in analysis['feature_dimensionalities']]
     feature_norms = [n.item() if torch.is_tensor(n) else n for n in analysis['feature_norms']]
-    geometry = analysis['feature_geometry'].cpu().numpy() if torch.is_tensor(analysis['feature_geometry']) else analysis['feature_geometry']
+    geometry = analysis['feature_geometry'].cpu().detach().numpy() if torch.is_tensor(analysis['feature_geometry']) else analysis['feature_geometry']
     frobenius_norm = analysis['frobenius_norm_squared'].item() if torch.is_tensor(analysis['frobenius_norm_squared']) else analysis['frobenius_norm_squared']
     dimensions_per_feature = analysis['dimensions_per_feature'].item() if torch.is_tensor(analysis['dimensions_per_feature']) else analysis['dimensions_per_feature']
     

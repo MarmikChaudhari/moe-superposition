@@ -1,13 +1,37 @@
 import torch
 import numpy as np
-from typing import Dict, Any, List
 import torch.nn.functional as F
+from model.model import MoEModel, Config
 
 # Set device
 if torch.cuda.is_available():
     DEVICE = 'cuda'
 else:
     DEVICE = 'cpu'
+
+def create_model(n_features=32, n_hidden=8, n_experts=4, n_active_experts=1, one_minus_sparsity=0.1, importance_vector=None):
+    """Train model with router selection tracking."""
+    config = Config(
+        n_features=n_features,
+        n_hidden=n_hidden,
+        n_experts=n_experts,
+        n_active_experts=n_active_experts,
+        load_balancing_loss=True,
+    )
+
+    if torch.cuda.is_available():
+        DEVICE = 'cuda'
+    else:
+        DEVICE = 'cpu'
+    
+    model = MoEModel(
+        config=config,
+        device=DEVICE,
+        importance = torch.tensor(importance_vector if importance_vector is not None else [1 for _ in range(config.n_features)]),
+        feature_probability=torch.tensor(one_minus_sparsity)
+    )
+
+    return model, config
 
 
 def classify_expert_weights_2d(expert_weights: torch.Tensor, tolerance: float = 0.1):
@@ -307,7 +331,7 @@ def compute_all_expert_probabilities(gate_matrix, feature_probability=None, n_sa
     return probs_with_data, probs_without_data
 
 
-# Tools to track gate expert selection statistics
+# Tools to track gate expert selection statistics (during training)
 # Currently only works for k=1
 
 import torch
