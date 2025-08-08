@@ -42,6 +42,7 @@ class MoEModel(nn.Module):
     nn.init.xavier_normal_(self.W_experts)
     self.b_final = nn.Parameter(torch.zeros((config.n_experts, config.n_features), device=device))
     self.gate = nn.Parameter(torch.zeros((config.n_experts, config.n_features), device=device))
+    nn.init.xavier_normal_(self.gate)
 
     if feature_probability is None:
       feature_probability = torch.ones(())
