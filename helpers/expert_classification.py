@@ -1,9 +1,224 @@
 # Examples in the dimensions_per_feature.ipynb notebook
 
+from __future__ import annotations
 import torch
 import numpy as np
 from matplotlib import pyplot as plt
 from helpers.dimensions_per_feature import compute_dimensions_per_feature_single
+from typing import Sequence, Literal, List
+from typing import Tuple
+
+def norm_and_superposition(
+    W: Sequence[Sequence[float]] | np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Parameters
+    ----------
+    W
+        An (n_features, d) array-like of feature / weight vectors.
+        If you pass a single 1-D vector, it will be treated as shape (1, d).
+
+    Returns
+    -------
+    norms         : shape (n_features,)   L2 norms  ‖Wᵢ‖₂
+    superposition : shape (n_features,)   ∑ⱼ (x̂ᵢ·x̂ⱼ)²  with j ≠ i
+    """
+    if torch.is_tensor(W):
+        W = W.detach().cpu().numpy()
+    W = np.asarray(W, dtype=float)
+    if W.ndim == 1:                       # allow a single vector
+        W = W[None, :]
+
+    # --- 1. Norms -----------------------------------------------------------
+    norms = np.linalg.norm(W, axis=1)     # ‖Wᵢ‖₂ for every row
+
+    # --- 2. Normalise & build cosine-similarity matrix ----------------------
+    # Handle zero vectors safely:
+    W_hat = np.divide(W, norms[:, None], where=norms[:, None] != 0)
+
+    cos = W_hat @ W.T                 # cos[i, j] = x̂ᵢ·x̂ⱼ
+
+    # superᵢ = Σⱼ (cos[i, j])² but exclude j = i
+    superposition = (cos**2).sum(axis=1) - 1.0   # subtract self-term (1²)
+
+    return norms, superposition
+
+
+import matplotlib.pyplot as plt
+
+MoEClass = Literal[
+    "ignore_all",       # (≈0, ≈0, ≈0)
+    "monosemantic",     # one dominant coord (e.g. 0.9, 0.05, 0.01)
+    "superimpose_two",  # two significant coords (e.g. 0.6, 0.6, 0.02)
+    "superimpose_three" # three significant coords (e.g. 0.4, 0.4, 0.3)
+]
+
+def classify_moe_vector(
+    v: Sequence[float],
+    *,
+    abs_tol: float = 1e-6,      # "close to zero" threshold
+    rel_sig: float = 0.10,      # coord is "significant" if ≥ rel_sig · max(|v|)
+    dominance: float = 0.80     # monosemantic if the largest coord ≥ dominance · ‖v‖₁
+) -> MoEClass:
+    """
+    Classify a 3-D weight vector for a toy MoE neuron.
+
+    Parameters
+    ----------
+    v : length-3 iterable of floats
+    abs_tol : absolute tolerance for treating a weight as zero
+    rel_sig : relative threshold (fraction of max |v|) for a coord to count
+    dominance : fraction of L1 norm the biggest coord must hold to be "mono"
+
+    Returns
+    -------
+    One of: "ignore_all", "monosemantic", "superimpose_two", "superimpose_three"
+    """
+    if len(v) != 3:
+        raise ValueError("Expected a length-3 vector.")
+
+    # Absolute-zero check
+    if all(abs(x) <= abs_tol for x in v):
+        return "ignore_all"
+
+    # Significant coordinates
+    m = max(abs(x) for x in v)
+    sig = [abs(x) >= rel_sig * m for x in v]
+    n_sig = sum(sig)
+
+    # Monosemantic test (one coord owns the bulk of the mass)
+    l1 = sum(abs(x) for x in v)
+    if max(abs(x) for x in v) >= dominance * l1:
+        return "monosemantic"
+
+    # Otherwise decide by count of significant coords
+    if n_sig == 2:
+        return "superimpose_two"
+    else:                # n_sig will be 3 here by elimination
+        return "superimpose_three"
+
+
+
+def compute_expert_selection_n3_n1(model):
+    """
+    Compute expert selection for a 3-feature, 1-hidden model.
+    
+    Returns:
+        List of classifications for each expert using the MoE classification scheme.
+    """
+    device = next(model.parameters()).device
+    n_experts = model.config.n_experts
+    
+    expert_classifications = []
+    
+    # Classify each expert based on their weight vector
+    for expert_idx in range(n_experts):
+        # Get expert weights for this expert
+        expert_weights = model.W_experts[expert_idx].squeeze().detach().cpu().numpy()  # Shape: [3]
+        
+        # Classify the expert using the MoE classification function
+        classification = classify_moe_vector(expert_weights)
+        
+        expert_classifications.append(classification)
+        
+        # Debug info
+        print(f"Expert {expert_idx}:")
+        print(f"  Weights: {expert_weights}")
+        print(f"  Classification: {classification}")
+        print()
+    
+    return expert_classifications
+
+
+def compute_expert_selection_n3_n1_special_third(model):
+    """
+    Compute expert selection for a 3-feature, 1-hidden model with SPECIAL third coordinate.
+    
+    Returns:
+        List of classifications for each expert using the special third coordinate scheme.
+    """
+    device = next(model.parameters()).device
+    n_experts = model.config.n_experts
+    
+    expert_classifications = []
+    
+    # Classify each expert based on their weight vector
+    for expert_idx in range(n_experts):
+        # Get expert weights for this expert
+        expert_weights = model.W_experts[expert_idx].squeeze().detach().cpu().numpy()  # Shape: [3]
+        
+        # Classify the expert using the special third coordinate classification function
+        classification = classify_moe_vector_special_third(expert_weights)
+        
+        expert_classifications.append(classification)
+        
+        # Debug info
+        print(f"Expert {expert_idx} (special third):")
+        print(f"  Weights: {expert_weights}")
+        print(f"  Classification: {classification}")
+        print()
+    
+    return expert_classifications
+
+
+MoEClassSpecial = Literal[
+    "ignore_all",            # (≈0, ≈0, ≈0)
+    "mono_1_or_2",           # dominant feature is 1 or 2
+    "mono_3",                # dominant feature is 3
+    "super_12",              # significant on 1 & 2 only
+    "super_with_3",          # significant on 3 plus one of {1,2}
+    "super_123"              # all three significant, none dominant
+]
+
+def _significant_mask_special(vals: Sequence[float], rel_sig: float) -> List[bool]:
+    """Return a boolean mask marking coords that are ≥ rel_sig · max(|v|)."""
+    m = max(abs(x) for x in vals)
+    return [abs(x) >= rel_sig * m for x in vals]
+
+def classify_moe_vector_special_third(
+    v: Sequence[float],
+    *,
+    abs_tol: float = 1e-6,   # "close to zero"
+    rel_sig: float = 0.10,   # coord counts if ≥ rel_sig · max(|v|)
+    dominance: float = 0.80  # monosem if biggest coord ≥ dominance · ‖v‖₁
+) -> MoEClassSpecial:
+    """
+    Classify a 3-D weight vector with a SPECIAL third coordinate.
+
+    Returns one of:
+      - ignore_all
+      - mono_1_or_2   (mono and winner is coord 0 or 1)
+      - mono_3        (mono and winner is coord 2)
+      - super_12      (sig on 1&2 only)
+      - super_with_3  (sig on 3 plus 1 or 2)
+      - super_123     (sig on all three)
+    """
+    if len(v) != 3:
+        raise ValueError("Expected a length-3 vector.")
+
+    # 1) Ignore-all check
+    if all(abs(x) <= abs_tol for x in v):
+        return "ignore_all"
+
+    # 2) Monosemantic?
+    l1 = sum(abs(x) for x in v)
+    max_val = max(abs(x) for x in v)
+    max_idx = max(range(3), key=lambda i: abs(v[i]))
+    if max_val >= dominance * l1:
+        return "mono_3" if max_idx == 2 else "mono_1_or_2"
+
+    # 3) Superposition cases
+    sig = _significant_mask_special(v, rel_sig)
+    sig_idx = [i for i, s in enumerate(sig) if s]
+
+    if len(sig_idx) == 2:
+        if set(sig_idx) == {0, 1}:          # 1 & 2 significant, 3 tiny
+            return "super_12"
+        else:                               # involves coordinate 3
+            return "super_with_3"
+    else:                                   # len == 3 by elimination
+        return "super_123"
+
 
 def plot_expert_selection_m2_e2(model, importance_vector, step=0.01, f1=0, f2=-1):
     """
@@ -58,10 +273,22 @@ def plot_expert_selection_m2_e2(model, importance_vector, step=0.01, f1=0, f2=-1
     # Create a figure
     plt.figure(figsize=(10, 6))
     plt.contourf(feature_1_grid, feature_last_grid, expert_selection, levels=20, cmap='viridis')
-    plt.colorbar(label='Expert 0 Selection Probability')
-    plt.xlabel(f'Feature 1 (max={max_val:.2f})')
-    plt.ylabel(f'Feature {n_features} (max={max_val:.2f})')
-    plt.title(f'Expert 0 Selection Probability: Feature 1 vs Feature {n_features}')
+    cbar = plt.colorbar(label='Expert 0 Selection Probability')
+    cbar.ax.tick_params(labelsize=10)
+    
+    plt.xlabel(f'Feature 1 (max={max_val:.2f})', fontsize=12, labelpad=10)
+    plt.ylabel(f'Feature {n_features} (max={max_val:.2f})', fontsize=12, labelpad=10)
+    plt.title(f'Expert 0 Selection Probability: Feature 1 vs Feature {n_features}', fontsize=14, pad=15)
+    
+    # Improve tick label spacing with fewer ticks
+    # Reduce number of ticks for better legibility
+    x_ticks = np.linspace(0, len(feature_1_values)-1, min(8, len(feature_1_values)), dtype=int)
+    y_ticks = np.linspace(0, len(feature_last_values)-1, min(6, len(feature_last_values)), dtype=int)
+    
+    plt.xticks(x_ticks, [f'{feature_1_values[i]:.2f}' for i in x_ticks], fontsize=10)
+    plt.yticks(y_ticks, [f'{feature_last_values[i]:.2f}' for i in y_ticks], fontsize=10)
+    
+    plt.tight_layout(pad=2.0)
     plt.show()
 
 
