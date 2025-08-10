@@ -39,10 +39,20 @@ class MoEModel(nn.Module):
     super().__init__()
     self.config = config
     self.W_experts = nn.Parameter(torch.empty((config.n_experts, config.n_features, config.n_hidden), device=device))
+    self.b_final = nn.Parameter(torch.empty((config.n_experts, config.n_features), device=device))
+    self.gate = nn.Parameter(torch.empty((config.n_experts, config.n_features), device=device))
+    
     nn.init.xavier_normal_(self.W_experts)
-    self.b_final = nn.Parameter(torch.zeros((config.n_experts, config.n_features), device=device))
-    self.gate = nn.Parameter(torch.zeros((config.n_experts, config.n_features), device=device))
     nn.init.xavier_normal_(self.gate)
+    nn.init.xavier_normal_(self.b_final)
+
+    # custom_gate_init = False
+    # if custom_gate_init:
+    #   nn.init.zeros_(self.gate)
+    #   self.gate.fill_diagonal_(1)
+    # else:
+    #   nn.init.xavier_normal_(self.gate)
+
 
     if feature_probability is None:
       feature_probability = torch.ones(())
@@ -272,3 +282,6 @@ def optimize_vectorized(configs, feature_probs, importances,
                 h(hook_data)
         if step % print_freq == 0 or (step + 1 == steps):
             print(f"Step {step}: avg_loss={losses.mean().item():.6f}, lr={step_lr:.6f}")
+    
+    # Return final losses and model parameters
+    return losses, stacked_params

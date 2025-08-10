@@ -11,6 +11,7 @@ import json
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from global_feat_dims import global_feature_dimensionality
 from model.model import Config, MoEModel, optimize_vectorized, make_functional_model, vectorized_forward, generate_vectorized_batch, stack_state_dicts
 from helpers.dimensions_per_feature import compute_dimensions_per_feature_single
 from helpers.expert_classification import classify_all_experts_feature_allocation
@@ -37,12 +38,13 @@ class GridExperimentConfig:
     importance_values: List[float] = None  # Last feature importance values
     base_importance: float = 1.0  # Base importance for all features except last
     skip_last_feature: bool = False # treat last feature like the rest
+    # n_experts_values: List[int] = None  # Number of experts values, replaces importance if specified
     
     def __post_init__(self):
         if self.sparsity_values is None:
-            self.sparsity_values = np.arange(0.05, 1.0, 0.05)
+            self.sparsity_values = np.arange(0.01, 1.0, 0.05)
         if self.importance_values is None:
-            self.importance_values = np.arange(0.1, 2, 0.1)
+            self.importance_values = np.arange(0.1, 5, 0.25)
 
 
 def create_grid_configs(config: GridExperimentConfig) -> Tuple[List[Config], List[torch.Tensor], List[torch.Tensor]]:
@@ -57,14 +59,18 @@ def create_grid_configs(config: GridExperimentConfig) -> Tuple[List[Config], Lis
     configs = []
     feature_probs = []
     importances = []
+    experts = []
+
+    if config.n_experts_values is not None:
+        print(f"Using {config.n_experts_values} as importance values")
     
     for sparsity in config.sparsity_values:
-        for importance in config.importance_values:
+        for second_option in (config.n_experts_values or config.importance_values):
             # Create model config
             model_config = Config(
                 n_features=config.n_features,
                 n_hidden=config.n_hidden,
-                n_experts=config.n_experts,
+                n_experts=config.n_experts if config.n_experts_values is None else second_option,
                 n_active_experts=config.n_active_experts,
                 load_balancing_loss=True
             )
@@ -76,10 +82,13 @@ def create_grid_configs(config: GridExperimentConfig) -> Tuple[List[Config], Lis
             
             # Create importance tensor (base importance for all except last, custom for last)
             importance_tensor = torch.ones(config.n_features, device=DEVICE) * config.base_importance
-            if not config.skip_last_feature: importance_tensor[-1] = importance  # Set last feature importance
+            if ((not config.skip_last_feature) and (config.n_experts_values is None)): 
+                importance_tensor[-1] = second_option  # Set last feature importance
             importances.append(importance_tensor)
+            
+            experts.append(config.n_experts if config.n_experts_values is None else second_option)
     
-    return configs, feature_probs, importances
+    return configs, feature_probs, importances, experts
 
 
 def train_grid_models(config: GridExperimentConfig, custom_gate_init=False) -> Dict[str, Any]:
@@ -94,7 +103,7 @@ def train_grid_models(config: GridExperimentConfig, custom_gate_init=False) -> D
     print(f"Training {config.n_models_per_cell} independent runs...")
     
     # Create base configurations for all grid points
-    base_configs, feature_probs, importances = create_grid_configs(config)
+    base_configs, feature_probs, importances, experts = create_grid_configs(config)
     
     # Store all runs for each grid cell
     all_runs = []
@@ -175,6 +184,28 @@ def train_grid_models(config: GridExperimentConfig, custom_gate_init=False) -> D
         'all_runs': all_runs  # Keep all runs for potential analysis
     }
 
+def plot_global_feature_dimensionality_grid(grid_results: Dict[str, Any], config: GridExperimentConfig):
+    """
+    Create a 2D grid plot showing global feature dimensionality.
+    """
+    sparsity_values = config.sparsity_values
+    importance_values = config.importance_values
+
+    # plot global feature dimensionality
+    global_dims = np.zeros((len(sparsity_values), len(importance_values)))
+    for i, sparsity in enumerate(sparsity_values):
+        for j, importance in enumerate(importance_values):
+            result = grid_results[(sparsity, importance)]
+            global_dims[i, j] = global_feature_dimensionality(result)
+
+    # plot global feature dimensionality
+    im = plt.imshow(global_dims, cmap='viridis', aspect='auto')
+    plt.colorbar(im, label='Global Feature Dimensionality')
+    plt.xlabel('Last Feature Importance')
+    plt.ylabel('Feature Sparsity')
+    plt.title('Global Feature Dimensionality')
+    plt.show()
+    
 
 def analyze_grid_models(results: Dict[str, Any], tolerance=0.1) -> Dict[str, Any]:
     """
@@ -214,7 +245,8 @@ def analyze_grid_models(results: Dict[str, Any], tolerance=0.1) -> Dict[str, Any
                 'final_loss': results['final_losses'][grid_idx].item(),
                 'expert_weights': expert_weights.cpu().detach().numpy(),
                 'gate_params': model_params['gate'].cpu().detach().numpy(),
-                'grid_idx': grid_idx
+                'grid_idx': grid_idx,
+                'model': model_params
             }
     
     return grid_results
@@ -316,7 +348,7 @@ def plot_dimensions_per_feature_grid(grid_results: Dict[str, Any], config: GridE
     fig, axes = plt.subplots(1, n_experts, figsize=(5*n_experts, 5))
     if n_experts == 1:
         axes = [axes]
-    
+
     # Plot for each expert
     for expert_idx in range(n_experts):
         ax = axes[expert_idx]
