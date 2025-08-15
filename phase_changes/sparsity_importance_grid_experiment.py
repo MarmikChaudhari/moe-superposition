@@ -38,7 +38,7 @@ class GridExperimentConfig:
     importance_values: List[float] = None  # Last feature importance values
     base_importance: float = 1.0  # Base importance for all features except last
     skip_last_feature: bool = False # treat last feature like the rest
-    # n_experts_values: List[int] = None  # Number of experts values, replaces importance if specified
+    n_experts_values: List[int] = None  # Number of experts values, replaces importance if specified
     
     def __post_init__(self):
         if self.sparsity_values is None:
@@ -167,7 +167,7 @@ def train_grid_models(config: GridExperimentConfig, custom_gate_init=False) -> D
             importance_idx = grid_idx % len(config.importance_values)
             sparsity = config.sparsity_values[sparsity_idx]
             importance = config.importance_values[importance_idx]
-            print(f"  Cell ({sparsity:.2f}, {importance:.1f}): best loss {best_loss:.6f} (run {best_run_idx + 1})")
+            print(f"  Debug Cell {grid_idx}/5 ({sparsity:.2f}, {importance:.1f}): best loss {best_loss:.6f} (run {best_run_idx + 1})")
     
     end_time = time.time()
     print(f"Training completed in {end_time - start_time:.2f} seconds")

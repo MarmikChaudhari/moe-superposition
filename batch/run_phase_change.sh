@@ -1,7 +1,8 @@
 #!/bin/bash
-#SBATCH -p day
-#SBATCH -c 4
-#SBATCH -t 3:00:00
+#SBATCH --job-name=phase_change
+#SBATCH -p gpu
+#SBATCH --gpus=1
+#SBATCH -t 18:00:00
 
 module reset
 module load miniconda
